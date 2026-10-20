@@ -1,0 +1,22 @@
+# Entorno virtual
+venv/
+.venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+
+# Configuraciones privadas
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Archivos del editor
+.vscode/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de prueba y depuración
+geckodriver.log
