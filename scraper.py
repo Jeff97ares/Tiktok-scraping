@@ -13,30 +13,30 @@ Nota: los resultados dependen del HTML y de las restricciones de TikTok.
 El módulo no publica comentarios ni descarga videos.
 """
 
-import json
+import json  # Permite leer y convertir datos JSON a estructuras de Python.
 
-import re
+import re  # Permite utilizar expresiones regulares para validar usuarios y extraer IDs de videos.
 
-import time
+import time  # Permite establecer pausas para esperar que TikTok cargue contenido.
 
-from pathlib import Path
+from pathlib import Path  # Permite manejar rutas de archivos, como la ubicación de Firefox.
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse  # Permite separar y analizar las partes de una URL.
 
 
-import streamlit as st
+import streamlit as st  # Permite gestionar la sesión del navegador y mostrar el progreso en la interfaz.
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup  # Permite analizar el HTML y extraer información de TikTok.
 
-from selenium import webdriver
+from selenium import webdriver  # Permite controlar y automatizar el navegador Firefox.
 
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException  # Permite manejar errores de espera y del navegador.
 
-from selenium.webdriver.common.by import By
+from selenium.webdriver.common.by import By  # Permite localizar elementos HTML mediante selectores CSS, ID, etc.
 
-from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.options import Options  # Permite configurar Firefox antes de iniciarlo.
 
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait  # Permite esperar hasta que aparezcan elementos en la página.
 
 
 # Ruta opcional del ejecutable de Firefox Developer Edition.
@@ -44,6 +44,10 @@ DEVELOPER_EXE = Path(r"C:\Program Files\Firefox Developer Edition\firefox.exe")
 
 # Expresión regular: extrae el usuario y el ID de una URL de video.
 VIDEO_RE = re.compile(r"/@([^/?#]+)/video/(\d{15,22})")
+
+# Cambia estos dos valores para ajustar los límites de extracción.
+MAX_VIDEOS = 10
+MAX_COMENTARIOS = 10
 
 # Selectores comprobados con Firefox Developer Edition.
 
@@ -209,7 +213,7 @@ def videos_from_html(html, username):
 
         video_id = str(video_id or '')
 
-        if not re.fullmatch(r'\d{15,22}', video_id) or len(found) >= 10:
+        if not re.fullmatch(r'\d{15,22}', video_id) or len(found) >= MAX_VIDEOS:
 
             return
 
@@ -241,7 +245,7 @@ def videos_from_html(html, username):
     # Segunda estrategia: recorrer recursivamente listas y diccionarios JSON.
     def walk(node, depth=0):
 
-        if depth > 20 or len(found) >= 10:
+        if depth > 20 or len(found) >= MAX_VIDEOS:
 
             return
 
@@ -305,7 +309,7 @@ def videos_from_html(html, username):
 
         walk(data)
 
-        if len(found) >= 10:
+        if len(found) >= MAX_VIDEOS:
 
             break
 
@@ -438,10 +442,10 @@ def collect_profile(username, progress):
                     'descripcion': 'Descripción no disponible'})
 
         # Actualiza el avance en la interfaz.
-        progress.progress(min(len(videos), 10) / 10, text=f'Publicaciones encontradas: {min(len(videos), 10)}/10')
+        progress.progress(min(len(videos), MAX_VIDEOS) / MAX_VIDEOS, text=f'Publicaciones encontradas: {min(len(videos), MAX_VIDEOS)}/{MAX_VIDEOS}')
 
         # Termina anticipadamente al alcanzar el objetivo.
-        if len(videos) >= 10:
+        if len(videos) >= MAX_VIDEOS:
 
             break
 
@@ -450,7 +454,7 @@ def collect_profile(username, progress):
 
         time.sleep(1.5)
 
-    return profile, list(videos.values())[:10]
+    return profile, list(videos.values())[:MAX_VIDEOS]
 
 
 def comments_from_html(html):
@@ -526,7 +530,7 @@ def comments_from_html(html):
         # Almacena el comentario con sus dos campos.
         result.append({'autor': author, 'texto': content})
 
-        if len(result) >= 10:
+        if len(result) >= MAX_COMENTARIOS:
 
             break
 
@@ -596,14 +600,14 @@ def collect_comments(video_url, progress):
 
             progress.progress(min(avance, 1.0),
 
-                              text=f'Leyendo comentarios automáticamente: {len(best)}/10')
+                              text=f'Leyendo comentarios automáticamente: {len(best)}/{MAX_COMENTARIOS}')
 
             # Devuelve inmediatamente los diez comentarios al completar el objetivo.
-            if len(best) >= 10:
+            if len(best) >= MAX_COMENTARIOS:
 
-                progress.progress(1.0, text='Se encontraron 10 comentarios')
+                progress.progress(1.0, text=f'Se encontraron {MAX_COMENTARIOS} comentarios')
 
-                return best[:10]
+                return best[:MAX_COMENTARIOS]
 
 
             # Intentar activar el panel sin escribir ni publicar comentarios.
@@ -679,4 +683,4 @@ def collect_comments(video_url, progress):
 
     progress.progress(1.0, text=f'Consulta terminada: {len(best)} comentarios')
 
-    return best[:10]
+    return best[:MAX_COMENTARIOS]
