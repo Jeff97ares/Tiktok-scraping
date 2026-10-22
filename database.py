@@ -1,69 +1,162 @@
+
+"""Almacenamiento local de perfiles, videos y comentarios de TikTok."""
+
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "tiktok_data.db"
+DB_PATH = Path(__file__).resolve().parent / "tiktok_data.db"
 
 
-def get_connection():
-    return sqlite3.connect(DB_PATH)
+def conectar():
+    """Abre una conexión con la base de datos SQLite."""
+    conexion = sqlite3.connect(DB_PATH)
+    conexion.execute("PRAGMA foreign_keys = ON")
+    return conexion
 
 
-def init_database():
-    with get_connection() as conn:
-        conn.execute("""
+def inicializar_db():
+    """Crea las tablas si todavía no existen."""
+
+    with conectar() as conn:
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS perfiles (
                 username TEXT PRIMARY KEY,
+                nombre TEXT,
                 seguidores TEXT,
                 seguidos TEXT,
-                fecha_extraccion TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+                fecha_actualizacion TEXT DEFAULT CURRENT_TIMESTAMP
+            );
 
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS videos (
                 video_id TEXT PRIMARY KEY,
-                username TEXT,
-                url TEXT,
+                username TEXT NOT NULL,
+                url TEXT NOT NULL,
+                descripcion TEXT,
+                fecha_actualizacion TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (username) REFERENCES perfiles(username)
-            )
-        """)
+            );
 
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS comentarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id TEXT,
-                autor TEXT,
-                texto TEXT,
+                video_id TEXT NOT NULL,
+                autor TEXT NOT NULL,
+                texto TEXT NOT NULL,
                 fecha_extraccion TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(video_id, autor, texto),
                 FOREIGN KEY (video_id) REFERENCES videos(video_id)
-            )
+            );
         """)
 
-        conn.commit()
+
+def guardar_perfil(username, perfil, videos):
+    """Guarda o actualiza un perfil y sus publicaciones."""
+
+    with conectar() as conn:
+        conn.execute("""
+            INSERT INTO perfiles
+                (username, nombre, seguidores, seguidos)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                nombre = excluded.nombre,
+                seguidores = excluded.seguidores,
+                seguidos = excluded.seguidos,
+                fecha_actualizacion = CURRENT_TIMESTAMP
+        """, (
+            username,
+            str(perfil.get("nombre", "")),
+            str(perfil.get("seguidores", "")),
+            str(perfil.get("seguidos", "")),
+        ))
+
+        for video in videos:
+            conn.execute("""
+                INSERT INTO videos
+                    (video_id, username, url, descripcion)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(video_id) DO UPDATE SET
+                    url = excluded.url,
+                    descripcion = excluded.descripcion,
+                    fecha_actualizacion = CURRENT_TIMESTAMP
+            """, (
+                str(video["id"]),
+                username,
+                video["url"],
+                video.get("descripcion", ""),
+            ))
 
 
 def guardar_comentarios(video_id, comentarios):
-    with get_connection() as conn:
+    """Guarda comentarios sin duplicar autor y texto en el mismo video."""
+
+    nuevos = 0
+
+    with conectar() as conn:
         for comentario in comentarios:
-            conn.execute(
-                """
-                INSERT INTO comentarios (video_id, autor, texto)
+            autor = str(comentario.get("autor", "")).strip()
+            texto = str(comentario.get("texto", "")).strip()
+
+            if not texto:
+                continue
+
+            cursor = conn.execute("""
+                INSERT OR IGNORE INTO comentarios
+                    (video_id, autor, texto)
                 VALUES (?, ?, ?)
-                """,
-                (
-                    video_id,
-                    comentario.get("autor", ""),
-                    comentario.get("texto", "")
-                )
-            )
+            """, (str(video_id), autor, texto))
 
-        conn.commit()
+            nuevos += cursor.rowcount
+
+    return nuevos
 
 
-def obtener_comentarios():
-    with get_connection() as conn:
-        return conn.execute("""
-            SELECT video_id, autor, texto
-            FROM comentarios
-            WHERE TRIM(texto) != ''
-        """).fetchall()
+def obtener_comentarios(video_id=None):
+    """Consulta los comentarios almacenados."""
+
+    consulta = """
+        SELECT
+            c.video_id,
+            v.url,
+            c.autor,
+            c.texto,
+            c.fecha_extraccion
+        FROM comentarios AS c
+        JOIN videos AS v ON v.video_id = c.video_id
+    """
+
+    parametros = ()
+
+    if video_id is not None:
+        consulta += " WHERE c.video_id = ?"
+        parametros = (str(video_id),)
+
+    consulta += " ORDER BY c.id DESC"
+
+    with conectar() as conn:
+        conn.row_factory = sqlite3.Row
+        return [
+            dict(fila)
+            for fila in conn.execute(consulta, parametros)
+        ]
+
+
+def obtener_estadisticas():
+    """Devuelve la cantidad de registros almacenados."""
+
+    with conectar() as conn:
+        perfiles = conn.execute(
+            "SELECT COUNT(*) FROM perfiles"
+        ).fetchone()[0]
+
+        videos = conn.execute(
+            "SELECT COUNT(*) FROM videos"
+        ).fetchone()[0]
+
+        comentarios = conn.execute(
+            "SELECT COUNT(*) FROM comentarios"
+        ).fetchone()[0]
+
+    return {
+        "perfiles": perfiles,
+        "videos": videos,
+        "comentarios": comentarios,
+    }
