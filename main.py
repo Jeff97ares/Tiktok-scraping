@@ -98,6 +98,18 @@ videos = st.session_state.videos
 if profile is not None:
     render_profile_metrics(profile, videos, st.session_state.username)
 
+    # Datos adicionales: se muestran solo si TikTok los proporciona.
+    st.markdown("### 👤 Información pública adicional")
+    biografia = profile.get("biografia")
+    with st.container(border=True):
+        st.markdown("**Biografía del perfil**")
+        st.write(biografia if biografia else "No disponible en los datos extraídos.")
+        fechas_disponibles = sum(bool(v.get("fecha_publicacion")) for v in videos)
+        st.caption(
+            f"Fechas de publicación identificadas: {fechas_disponibles} "
+            f"de {len(videos)} videos."
+        )
+
 if videos:
     st.divider()
     st.markdown("### 🎬 Publicaciones y comentarios")
@@ -125,6 +137,8 @@ if videos:
         with st.container(border=True):
             st.markdown("#### 📋 Publicación seleccionada")
             st.write(video.get("descripcion", ""))
+            fecha = video.get("fecha_publicacion")
+            st.caption(f"Fecha de publicación (UTC): {fecha or 'No disponible'}")
             st.caption(f"Video {video_ids.index(chosen) + 1} de {len(videos)}")
             st.link_button(
                 "↗ Abrir video en TikTok", video["url"], use_container_width=True
@@ -180,6 +194,43 @@ else:
         "y publicaciones.</div>",
         unsafe_allow_html=True,
     )
+
+# Resumen de datos observables del perfil, sin inferencias psicológicas.
+if profile is not None:
+    with st.expander("📈 Actividad pública del perfil · análisis exploratorio", expanded=False):
+        st.caption(
+            "Estos indicadores describen publicaciones accesibles. No son puntuaciones "
+            "Big Five ni permiten determinar la personalidad del titular."
+        )
+        descripciones = [
+            str(v.get("descripcion") or "").strip()
+            for v in videos
+            if str(v.get("descripcion") or "").strip().lower()
+            not in ("", "descripción no disponible")
+        ]
+        fechas = sorted({
+            str(v.get("fecha_publicacion")) for v in videos
+            if v.get("fecha_publicacion")
+        })
+        a, b, c = st.columns(3)
+        a.metric("Publicaciones accesibles", len(videos))
+        b.metric("Descripciones disponibles", len(descripciones))
+        c.metric("Fechas disponibles", sum(bool(v.get("fecha_publicacion")) for v in videos))
+        if len(fechas) >= 2:
+            st.write(f"Periodo observado: {fechas[0]} a {fechas[-1]} (UTC).")
+        elif fechas:
+            st.write(f"Fecha observada: {fechas[0]} (UTC).")
+        else:
+            st.info("No hay fechas suficientes para estudiar regularidad de publicación.")
+        if descripciones:
+            st.markdown("**Descripciones publicadas por el perfil**")
+            st.dataframe(
+                [{"Descripción": texto} for texto in descripciones],
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info("No hay descripciones disponibles para analizar temas.")
 
 # Estado de almacenamiento, incluso antes de realizar una nueva búsqueda.
 with st.expander("🗄️ Estado de la base de datos SQLite", expanded=False):

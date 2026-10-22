@@ -1,52 +1,63 @@
 """Extracción de información pública de perfiles y videos de TikTok.
 
 Este módulo reúne la lógica de scraping del proyecto:
+
 - Selenium controla Firefox Developer Edition y carga contenido dinámico.
+
 - BeautifulSoup interpreta el HTML para obtener perfiles, videos y comentarios.
+
 - Streamlit conserva la sesión del navegador y muestra el progreso.
 
 Flujo principal:
+
     main.py -> collect_profile() -> profile_from_html() / videos_from_html()
+
     main.py -> collect_comments() -> comments_from_html()
 
 Nota: los resultados dependen del HTML y de las restricciones de TikTok.
+
 El módulo no publica comentarios ni descarga videos.
+
 """
 
-import json  # Permite leer y convertir datos JSON a estructuras de Python.
+import json
 
-import re  # Permite utilizar expresiones regulares para validar usuarios y extraer IDs de videos.
+import re
 
-import time  # Permite establecer pausas para esperar que TikTok cargue contenido.
+import time
 
-from pathlib import Path  # Permite manejar rutas de archivos, como la ubicación de Firefox.
+from pathlib import Path
 
-from urllib.parse import urlparse  # Permite separar y analizar las partes de una URL.
+from urllib.parse import urlparse
 
+import streamlit as st
 
-import streamlit as st  # Permite gestionar la sesión del navegador y mostrar el progreso en la interfaz.
+from profile_extras import extract_profile_extras, clean_description
 
-from bs4 import BeautifulSoup  # Permite analizar el HTML y extraer información de TikTok.
+from bs4 import BeautifulSoup
 
-from selenium import webdriver  # Permite controlar y automatizar el navegador Firefox.
+from selenium import webdriver
 
-from selenium.common.exceptions import TimeoutException, WebDriverException  # Permite manejar errores de espera y del navegador.
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
-from selenium.webdriver.common.by import By  # Permite localizar elementos HTML mediante selectores CSS, ID, etc.
+from selenium.webdriver.common.by import By
 
-from selenium.webdriver.firefox.options import Options  # Permite configurar Firefox antes de iniciarlo.
+from selenium.webdriver.firefox.options import Options
 
-from selenium.webdriver.support.ui import WebDriverWait  # Permite esperar hasta que aparezcan elementos en la página.
-
+from selenium.webdriver.support.ui import WebDriverWait
 
 # Ruta opcional del ejecutable de Firefox Developer Edition.
+
 DEVELOPER_EXE = Path(r"C:\Program Files\Firefox Developer Edition\firefox.exe")
 
 # Expresión regular: extrae el usuario y el ID de una URL de video.
+
 VIDEO_RE = re.compile(r"/@([^/?#]+)/video/(\d{15,22})")
 
 # Cambia estos dos valores para ajustar los límites de extracción.
+
 MAX_VIDEOS = 10
+
 MAX_COMENTARIOS = 10
 
 # Selectores comprobados con Firefox Developer Edition.
@@ -71,24 +82,32 @@ COMMENT_USER = (
 
 )
 
-
 def parse_user(value):
 
     """Valida y normaliza un nombre de usuario o enlace de TikTok.
 
     Args:
+
         value (str): Nombre con o sin @, o URL del perfil.
+
     Returns:
+
         str: Nombre de usuario sin @.
+
     Raises:
+
         ValueError: Si la URL no es de TikTok o el usuario no es válido.
+
     """
+
     # Elimina espacios al inicio y al final de la entrada.
+
     value = value.strip()
 
     if value.startswith(('https://', 'http://')):
 
         # Separa la URL en componentes para verificar el dominio.
+
         parsed = urlparse(value)
 
         if (parsed.hostname or '').lower() not in ('tiktok.com', 'www.tiktok.com', 'm.tiktok.com'):
@@ -98,6 +117,7 @@ def parse_user(value):
         value = parsed.path.strip('/').split('/')[0]
 
     # Acepta usuarios escritos con o sin @.
+
     value = value.lstrip('@')
 
     if not re.fullmatch(r'[A-Za-z0-9._]{1,24}', value):
@@ -106,17 +126,22 @@ def parse_user(value):
 
     return value
 
-
 def json_scripts(soup):
 
     """Genera objetos Python a partir de scripts con JSON válido.
 
     Args:
+
         soup (BeautifulSoup): Documento HTML previamente analizado.
+
     Yields:
+
         dict | list: Datos JSON decodificados; omite scripts no válidos.
+
     """
+
     # Recorre los bloques <script> que podrían contener datos JSON.
+
     for script in soup.find_all('script'):
 
         raw = (script.string or script.get_text() or '').strip()
@@ -126,26 +151,33 @@ def json_scripts(soup):
             try:
 
                 # Convierte JSON a objetos Python y los entrega uno a uno.
+
                 yield json.loads(raw)
 
             except (ValueError, TypeError):
 
                 pass
 
-
 def profile_from_html(html):
 
     """Extrae el nombre visible y las estadísticas de un perfil.
 
     Busca datos incrustados en scripts JSON de TikTok. Si no encuentra
+
     un campo, conserva su valor predeterminado.
 
     Args:
+
         html (str): Código HTML del perfil.
+
     Returns:
+
         dict: Campos nombre, seguidores y seguidos.
+
     """
+
     # Prepara valores de respaldo cuando faltan datos.
+
     profile = {'nombre': 'No disponible', 'seguidores': 'N/D', 'seguidos': 'N/D'}
 
     for data in json_scripts(BeautifulSoup(html, 'html.parser')):
@@ -155,6 +187,7 @@ def profile_from_html(html):
             continue
 
         # Intenta obtener los datos del perfil del formato JSON principal.
+
         scope = data.get('__DEFAULT_SCOPE__', {})
 
         info = scope.get('webapp.user-detail', {}).get('userInfo', {}) if isinstance(scope, dict) else {}
@@ -162,6 +195,7 @@ def profile_from_html(html):
         if not info:
 
             # Busca una estructura alternativa utilizada por TikTok.
+
             users = data.get('UserModule', {}).get('users', {})
 
             if isinstance(users, dict) and users:
@@ -188,32 +222,39 @@ def profile_from_html(html):
 
     return profile
 
-
 def videos_from_html(html, username):
 
     """Obtiene hasta diez publicaciones pertenecientes al perfil indicado.
 
     Combina enlaces HTML con datos JSON incrustados. El ID del video
+
     se usa como clave para evitar duplicados.
 
     Args:
+
         html (str): HTML del perfil.
+
         username (str): Nombre del propietario del perfil.
+
     Returns:
+
         list[dict]: Videos con id, url y descripcion.
+
     """
+
     soup = BeautifulSoup(html, 'html.parser')
 
     # Usa un diccionario para evitar repetir IDs de videos.
+
     found = {}
 
-
     # Función interna: valida un video y lo añade si corresponde al usuario.
+
     def add(video_id, description='', author=None):
 
         video_id = str(video_id or '')
 
-        if not re.fullmatch(r'\d{15,22}', video_id) or len(found) >= MAX_VIDEOS:
+        if not re.fullmatch(r'\d{15,22}', video_id) or (len(found) >= MAX_VIDEOS and video_id not in found):
 
             return
 
@@ -221,28 +262,38 @@ def videos_from_html(html, username):
 
             return
 
-        found.setdefault(video_id, {
+        candidate = clean_description(description)
+
+        if video_id in found:
+
+            if candidate and not clean_description(found[video_id]['descripcion']):
+
+                found[video_id]['descripcion'] = candidate
+
+            return
+
+        found[video_id] = {
 
             'id': video_id,
 
             'url': f'https://www.tiktok.com/@{username}/video/{video_id}',
 
-            'descripcion': str(description or 'Descripción no disponible')[:300]
+            'descripcion': candidate or 'Descripción no disponible',
 
-        })
-
+        }
 
     # Primera estrategia: localizar enlaces de publicaciones en HTML.
+
     for link in soup.select('a[href*="/video/"]'):
 
         match = VIDEO_RE.search(link.get('href', ''))
 
         if match and match.group(1).lower() == username.lower():
 
-            add(match.group(2), link.get('title') or link.get_text(' ', strip=True))
-
+            add(match.group(2), link.get('title') or '')
 
     # Segunda estrategia: recorrer recursivamente listas y diccionarios JSON.
+
     def walk(node, depth=0):
 
         if depth > 20 or len(found) >= MAX_VIDEOS:
@@ -303,8 +354,8 @@ def videos_from_html(html, username):
 
                     walk(val, depth + 1)
 
-
     # Analiza datos estructurados incrustados en scripts.
+
     for data in json_scripts(soup):
 
         walk(data)
@@ -316,16 +367,52 @@ def videos_from_html(html, username):
     return list(found.values())
 
 
+
+def video_details_from_html(html, expected_id):
+    """Lee descripción y fecha del JSON público de la página de un video."""
+    from datetime import datetime, timezone
+
+    soup = BeautifulSoup(html, 'html.parser')
+    for data in json_scripts(soup):
+        if not isinstance(data, dict):
+            continue
+        scope = data.get('__DEFAULT_SCOPE__', {})
+        if not isinstance(scope, dict):
+            continue
+        details = scope.get('webapp.video-detail', {})
+        if not isinstance(details, dict):
+            continue
+        item = details.get('itemInfo', {}).get('itemStruct', {})
+        if not isinstance(item, dict) or str(item.get('id', '')) != str(expected_id):
+            continue
+        description = clean_description(item.get('desc')) or None
+        timestamp = item.get('createTime')
+        fecha = None
+        if timestamp:
+            try:
+                fecha = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).date().isoformat()
+            except (ValueError, TypeError, OverflowError, OSError):
+                pass
+        return {'descripcion': description, 'fecha_publicacion': fecha}
+    return {'descripcion': None, 'fecha_publicacion': None}
+
+
 def make_driver():
 
     """Inicia una sesión de Firefox controlada mediante Selenium.
 
     Si existe Firefox Developer Edition en la ruta configurada, lo usa;
+
     en caso contrario, Selenium intenta encontrar Firefox normalmente.
+
     Returns:
+
         WebDriver: Controlador de Firefox.
+
     """
+
     # Configura el navegador antes de iniciarlo.
+
     options = Options()
 
     if DEVELOPER_EXE.is_file():
@@ -333,44 +420,55 @@ def make_driver():
         options.binary_location = str(DEVELOPER_EXE)
 
     # Crea la sesión automatizada de Firefox.
+
     driver = webdriver.Firefox(options=options)
 
     # Evita esperas indefinidas durante la carga de páginas.
+
     driver.set_page_load_timeout(45)
 
     return driver
-
 
 def driver_alive(driver):
 
     """Comprueba si el controlador responde y tiene ventanas abiertas.
 
     Args:
+
         driver: Sesión WebDriver o None.
+
     Returns:
+
         bool: True si la sesión responde y tiene ventanas; False si no.
+
     """
+
     try:
 
         # Comprueba si hay un controlador y ventanas disponibles.
+
         return bool(driver and driver.window_handles)
 
     except WebDriverException:
 
         return False
 
-
 def ensure_driver():
 
     """Recupera Firefox desde la sesión de Streamlit o crea uno nuevo.
 
     Returns:
+
         WebDriver: Sesión disponible para navegar por TikTok.
+
     """
+
     # Recupera la sesión conservada entre ejecuciones de Streamlit.
+
     driver = st.session_state.get('driver')
 
     # Solo abre otro navegador si el anterior no está disponible.
+
     if not driver_alive(driver):
 
         driver = make_driver()
@@ -379,29 +477,38 @@ def ensure_driver():
 
     return driver
 
-
 def collect_profile(username, progress):
 
     """Abre un perfil y recopila sus datos y hasta diez videos.
 
     Utiliza dos métodos para encontrar videos: análisis del HTML y
+
     búsqueda directa de enlaces con Selenium. Desplaza la página
+
     para intentar cargar publicaciones adicionales.
 
     Args:
+
         username (str): Usuario de TikTok previamente validado.
+
         progress: Componente de progreso creado en Streamlit.
+
     Returns:
+
         tuple[dict, list[dict]]: Perfil y lista de publicaciones.
+
     """
+
     driver = ensure_driver()
 
     # Abre la URL del perfil en Firefox.
+
     driver.get(f'https://www.tiktok.com/@{username}')
 
     try:
 
         # Espera hasta 25 segundos por datos incrustados o enlaces de videos.
+
         WebDriverWait(driver, 25).until(lambda d:
 
             d.find_elements(By.ID, '__UNIVERSAL_DATA_FOR_REHYDRATION__') or
@@ -413,20 +520,41 @@ def collect_profile(username, progress):
         pass
 
     # Analiza el HTML actual para obtener nombre y estadísticas.
+
     profile = profile_from_html(driver.page_source)
 
     # Acumula publicaciones sin duplicar IDs.
+
     videos = {}
 
+    html_capturas = [driver.page_source]
+
     # Realiza hasta doce rondas de búsqueda y desplazamiento.
+
     for attempt in range(12):
 
         # Extrae publicaciones desde HTML y JSON.
-        for video in videos_from_html(driver.page_source, username):
 
-            videos.setdefault(video['id'], video)
+        html_actual = driver.page_source
+
+        html_capturas.append(html_actual)
+
+        for video in videos_from_html(html_actual, username):
+
+            anterior = videos.get(video['id'])
+
+            if anterior is None:
+
+                videos[video['id']] = video
+
+            elif (clean_description(video.get('descripcion'))
+
+                  and not clean_description(anterior.get('descripcion'))):
+
+                anterior['descripcion'] = video['descripcion']
 
         # Complementa la extracción con enlaces encontrados por Selenium.
+
         for el in driver.find_elements(By.CSS_SELECTOR, 'a[href*="/video/"]'):
 
             match = VIDEO_RE.search(el.get_attribute('href') or '')
@@ -442,42 +570,120 @@ def collect_profile(username, progress):
                     'descripcion': 'Descripción no disponible'})
 
         # Actualiza el avance en la interfaz.
+
         progress.progress(min(len(videos), MAX_VIDEOS) / MAX_VIDEOS, text=f'Publicaciones encontradas: {min(len(videos), MAX_VIDEOS)}/{MAX_VIDEOS}')
 
         # Termina anticipadamente al alcanzar el objetivo.
+
         if len(videos) >= MAX_VIDEOS:
 
             break
 
         # Desplaza la página para intentar cargar más videos.
+
         driver.execute_script('window.scrollBy(0, 650)')
 
         time.sleep(1.5)
 
-    return profile, list(videos.values())[:MAX_VIDEOS]
+    # Conserva los videos recopilados y complementa sus metadatos públicos.
 
+    lista_videos = list(videos.values())[:MAX_VIDEOS]
+
+    # Obtiene biografía y fechas cuando figuran en el HTML disponible.
+
+    # Consolidar metadatos de todas las capturas, no solo del último scroll.
+
+    biografia = None
+
+    fechas = {}
+
+    descripciones = {}
+
+    for html in html_capturas:
+
+        extras = extract_profile_extras(
+
+            html, username, [video['id'] for video in lista_videos]
+
+        )
+
+        biografia = extras['biografia'] or biografia
+
+        fechas.update(extras['fechas_videos'])
+
+        descripciones.update(extras['descripciones_videos'])
+
+    profile['biografia'] = biografia
+
+    for video in lista_videos:
+
+        video['descripcion'] = (descripciones.get(video['id'])
+
+                                or clean_description(video.get('descripcion'))
+
+                                or 'Descripción no disponible')
+
+        video['fecha_publicacion'] = fechas.get(video['id'])
+
+
+    # Complementar datos faltantes desde el JSON de cada publicación.
+    # Solo lee páginas públicas; reutiliza el Firefox existente.
+    for indice, video in enumerate(lista_videos, 1):
+        falta_descripcion = not clean_description(video.get('descripcion'))
+        falta_fecha = not video.get('fecha_publicacion')
+        if not (falta_descripcion or falta_fecha):
+            continue
+        try:
+            driver.get(video['url'])
+            WebDriverWait(driver, 12).until(
+                lambda d: video_details_from_html(d.page_source, video['id'])['descripcion'] is not None
+                or video_details_from_html(d.page_source, video['id'])['fecha_publicacion'] is not None
+            )
+        except (TimeoutException, WebDriverException):
+            pass
+        try:
+            detalle = video_details_from_html(driver.page_source, video['id'])
+            if falta_descripcion and detalle['descripcion']:
+                video['descripcion'] = detalle['descripcion']
+            if falta_fecha and detalle['fecha_publicacion']:
+                video['fecha_publicacion'] = detalle['fecha_publicacion']
+        except WebDriverException:
+            pass
+        progress.progress(
+            indice / len(lista_videos),
+            text=f'Consultando detalles de publicaciones: {indice}/{len(lista_videos)}'
+        )
+
+    return profile, lista_videos
 
 def comments_from_html(html):
 
     """Extrae hasta diez comentarios y sus autores del mismo contenedor.
 
     El nombre del autor y el texto son elementos relacionados mediante
+
     un contenedor padre. Se descartan entradas vacías y combinaciones
+
     repetidas de autor y comentario.
 
     Args:
+
         html (str): HTML de la página de un video.
+
     Returns:
+
         list[dict]: Elementos con autor y texto.
+
     """
 
     soup = BeautifulSoup(html, 'html.parser')
 
     # La lista guarda resultados y el conjunto ayuda a evitar duplicados.
+
     result, seen = [], set()
 
-
     # Busca elementos de comentarios de primer nivel.
+
     for text_el in soup.select('[data-e2e="comment-level-1"]'):
 
         content = text_el.get_text(' ', strip=True)
@@ -486,21 +692,22 @@ def comments_from_html(html):
 
             continue
 
-
         # El autor NO está dentro del span del comentario, sino en su padre.
 
         # Sube al contenedor que agrupa el comentario con su autor.
+
         parent = text_el.parent
 
         # Intenta obtener el autor desde el contenedor compartido.
+
         author_el = parent.select_one('[data-e2e="comment-username-1"]') if parent else None
 
         author = author_el.get_text(' ', strip=True) if author_el else ''
 
-
         # Alternativa: recuperar @usuario desde el enlace del mismo contenedor.
 
         # Si no aparece el nombre, busca su enlace de perfil.
+
         if not author and parent:
 
             link = parent.select_one('a[href^="/@"]')
@@ -517,8 +724,8 @@ def comments_from_html(html):
 
             author = 'Usuario no disponible'
 
-
         # Considera duplicada la misma combinación de autor y texto.
+
         key = (author, content)
 
         if key in seen:
@@ -528,6 +735,7 @@ def comments_from_html(html):
         seen.add(key)
 
         # Almacena el comentario con sus dos campos.
+
         result.append({'autor': author, 'texto': content})
 
         if len(result) >= MAX_COMENTARIOS:
@@ -536,28 +744,36 @@ def comments_from_html(html):
 
     return result
 
-
 def collect_comments(video_url, progress):
 
     """Carga y extrae hasta diez comentarios visibles de un video.
 
     Reutiliza Firefox, intenta abrir el panel de comentarios y lo desplaza
+
     para activar la carga diferida. Puede repetir la carga si el primer
+
     ciclo no encuentra comentarios. No escribe ni publica contenido.
 
     Args:
+
         video_url (str): Dirección del video.
+
         progress: Componente de progreso de Streamlit.
+
     Returns:
+
         list[dict]: Comentarios con autor y texto (hasta diez).
+
     """
 
     # Reutiliza la sesión de Firefox.
+
     driver = ensure_driver()
 
     selector = '[data-e2e="comment-level-1"]'
 
     # Define selectores alternativos para abrir el panel de comentarios.
+
     panel_buttons = (
 
         '[data-e2e="comment-icon"]',
@@ -569,10 +785,11 @@ def collect_comments(video_url, progress):
     )
 
     # Conserva la lista más numerosa encontrada.
+
     best = []
 
-
     # Permite un segundo ciclo solo si el primero no obtuvo comentarios.
+
     for carga in range(2):
 
         # Segundo intento: recargar solo si la primera visita no mostró nada.
@@ -581,21 +798,22 @@ def collect_comments(video_url, progress):
 
         time.sleep(2)
 
-
         # Realiza hasta quince intentos por ciclo.
+
         for attempt in range(15):
 
             # Leer primero: algunos videos muestran comentarios de inmediato.
 
             # Lee los comentarios actualmente presentes en el HTML.
+
             current = comments_from_html(driver.page_source)
 
             if len(current) > len(best):
 
                 best = current
 
-
             # Calcula el avance según el número de intentos.
+
             avance = (carga * 15 + attempt + 1) / 30
 
             progress.progress(min(avance, 1.0),
@@ -603,18 +821,19 @@ def collect_comments(video_url, progress):
                               text=f'Leyendo comentarios automáticamente: {len(best)}/{MAX_COMENTARIOS}')
 
             # Devuelve inmediatamente los diez comentarios al completar el objetivo.
+
             if len(best) >= MAX_COMENTARIOS:
 
                 progress.progress(1.0, text=f'Se encontraron {MAX_COMENTARIOS} comentarios')
 
                 return best[:MAX_COMENTARIOS]
 
-
             # Intentar activar el panel sin escribir ni publicar comentarios.
 
             # Si ya está abierto, no es necesario hacer clic.
 
             # Si aún no hay comentarios, intenta abrir el panel.
+
             if not driver.find_elements(By.CSS_SELECTOR, selector):
 
                 for button_selector in panel_buttons:
@@ -635,10 +854,10 @@ def collect_comments(video_url, progress):
 
                         continue
 
-
             # Desplazar el último comentario para activar la carga diferida.
 
             # Localiza los bloques visibles para desplazarse dentro del panel.
+
             blocks = driver.find_elements(By.CSS_SELECTOR, selector)
 
             if blocks:
@@ -669,17 +888,15 @@ def collect_comments(video_url, progress):
 
                 driver.execute_script('window.scrollBy(0, 350)')
 
-
             time.sleep(1.5)
-
 
         # Si ya hay comentarios, no recargar: conservar los obtenidos.
 
         # No recarga el video cuando ya hay comentarios.
+
         if best:
 
             break
-
 
     progress.progress(1.0, text=f'Consulta terminada: {len(best)} comentarios')
 
