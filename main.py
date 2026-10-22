@@ -1,56 +1,40 @@
-"""Punto de entrada: interfaz Streamlit del TikTok Web Scraper."""
+"""Dashboard TikTok: scraping original y análisis semántico opcional."""
 import streamlit as st
 from selenium.common.exceptions import TimeoutException, WebDriverException
-
-from scraper import parse_user, collect_profile, collect_comments
+from scraper import parse_user, collect_profile, collect_comments, MAX_COMENTARIOS
 from styles import apply_styles
 from components import render_sidebar, render_header, render_profile_metrics, render_comments
 
-st.set_page_config(
-    page_title="TikTok Analytics | Dashboard",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# CSS únicamente visual: no cambia la lógica de scraping.
+st.set_page_config(page_title='TikTok Analytics | Dashboard', page_icon='📊',
+                   layout='wide', initial_sidebar_state='expanded')
 apply_styles()
-
-# Los datos y el navegador permanecen en la sesión de Streamlit.
 for key, default in {
-    'profile': None,
-    'videos': [],
-    'comments': {},
-    'username': '',
-    'driver': None,
-    'selected_video_id': None,
+    'profile': None, 'videos': [], 'comments': {}, 'username': '',
+    'driver': None, 'selected_video_id': None,
+    'resultado_ia': None, 'firma_ia': None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
-# Menú lateral con el estado real del navegador.
 render_sidebar()
 render_header()
-
-# Formulario: mantiene el método de búsqueda del proyecto original.
 with st.form('search_form', clear_on_submit=False):
     st.markdown('**Buscar perfil de TikTok**')
-    input_value = st.text_input(
-        'Usuario o enlace del perfil',
-        value=st.session_state.username,
-        placeholder='@usuario o https://www.tiktok.com/@usuario',
-    )
-    search = st.form_submit_button('🔎 Consultar perfil', type='primary', use_container_width=True)
-
+    input_value = st.text_input('Usuario o enlace del perfil',
+                                value=st.session_state.username,
+                                placeholder='@usuario o https://www.tiktok.com/@usuario')
+    search = st.form_submit_button('🔎 Consultar perfil', type='primary',
+                                   use_container_width=True)
 if search:
     try:
         username = parse_user(input_value)
-        # Limpiar datos anteriores solamente al iniciar otra consulta.
         st.session_state.profile = None
         st.session_state.videos = []
         st.session_state.comments = {}
         st.session_state.username = username
         st.session_state.selected_video_id = None
+        st.session_state.resultado_ia = None
+        st.session_state.firma_ia = None
         with st.spinner('Consultando perfil con Firefox Developer Edition...'):
             profile, videos = collect_profile(username, st.progress(0))
         st.session_state.profile = profile
@@ -59,74 +43,143 @@ if search:
             st.session_state.selected_video_id = videos[0]['id']
             st.success(f'Consulta completada: {len(videos)} publicaciones encontradas.')
         else:
-            st.warning('No se encontraron publicaciones accesibles. Comprueba la página abierta en Firefox.')
+            st.warning('No se encontraron publicaciones accesibles. Comprueba Firefox.')
     except (ValueError, WebDriverException, TimeoutException) as exc:
         st.error(f'No se pudo completar la consulta: {exc}')
 
 profile = st.session_state.profile
 videos = st.session_state.videos
-
 if profile is not None:
     render_profile_metrics(profile, videos, st.session_state.username)
 
 if videos:
     st.divider()
     st.markdown('### 🎬 Publicaciones y comentarios')
-    st.caption('Selecciona una publicación, reproduce el video y consulta sus comentarios sin cambiar de pestaña.')
-
+    st.caption('Selecciona una publicación, reproduce el video y consulta sus comentarios.')
     video_ids = [v['id'] for v in videos]
     if st.session_state.selected_video_id not in video_ids:
         st.session_state.selected_video_id = video_ids[0]
-
-    # El selector y los comentarios comparten el mismo video seleccionado.
     chosen = st.selectbox(
-        'Selecciona una publicación',
-        options=video_ids,
+        'Selecciona una publicación', options=video_ids,
         format_func=lambda vid: (
-            f"Video {video_ids.index(vid) + 1:02d} · "
+            f"Video {video_ids.index(vid)+1:02d} · "
             f"{videos[video_ids.index(vid)]['descripcion'][:65]}"
-        ),
-        key='selected_video_id',
-    )
+        ), key='selected_video_id')
     video = next(v for v in videos if v['id'] == chosen)
-
     left, right = st.columns([1, 1.65], gap='large')
     with left:
         with st.container(border=True):
             st.markdown('#### 📋 Publicación seleccionada')
             st.write(video['descripcion'])
-            st.caption(f"Video {video_ids.index(chosen) + 1} de {len(videos)}")
+            st.caption(f"Video {video_ids.index(chosen)+1} de {len(videos)}")
             st.link_button('↗ Abrir video en TikTok', video['url'], use_container_width=True)
-
         st.markdown('#### 💬 Comentarios del video')
-        st.caption('Se consultan hasta 10 comentarios públicos y sus autores.')
-        # Botón visible junto al video; no requiere escribir en TikTok.
-        consultar = st.button(
-            '🔎 Consultar hasta 10 comentarios',
-            type='primary',
-            use_container_width=True,
-            key='consultar_comentarios',
-        )
+        st.caption(f'Se consultan hasta {MAX_COMENTARIOS} comentarios públicos y sus autores.')
+        consultar = st.button(f'🔎 Consultar hasta {MAX_COMENTARIOS} comentarios',
+                             type='primary', use_container_width=True,
+                             key='consultar_comentarios')
         if consultar:
             try:
                 with st.spinner('Extrayendo comentarios automáticamente desde Firefox...'):
                     comments_nuevos = collect_comments(video['url'], st.progress(0))
                 st.session_state.comments[video['url']] = comments_nuevos
+                st.session_state.resultado_ia = None
+                st.session_state.firma_ia = None
             except (WebDriverException, TimeoutException) as exc:
                 st.error(f'Error al consultar comentarios: {exc}')
-
         comments = st.session_state.comments.get(video['url'])
         render_comments(comments, video['id'])
-
     with right:
         st.markdown('#### ▶️ Reproductor integrado')
         st.caption('Reproductor oficial de TikTok.')
-        st.components.v1.iframe(
-            f"https://www.tiktok.com/player/v1/{video['id']}",
-            height=650,
-            scrolling=True,
-        )
-
+        st.components.v1.iframe(f"https://www.tiktok.com/player/v1/{video['id']}",
+                                height=650, scrolling=True)
 else:
-    st.write('')
-    st.markdown('<div class="empty-panel">🔎 <b>Tu dashboard está listo.</b><br>Introduce un perfil público de TikTok para consultar sus estadísticas y publicaciones.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="empty-panel">🔎 <b>Tu dashboard está listo.</b><br>'
+                'Introduce un perfil público de TikTok para consultar sus estadísticas '
+                'y publicaciones.</div>', unsafe_allow_html=True)
+
+if videos:
+    st.divider()
+    with st.expander('🧠 Análisis con IA y embeddings', expanded=False):
+        st.markdown('### Temas y sentimientos de los comentarios')
+        st.caption('Se analizan textos públicos, no la personalidad de quien publica.')
+        opciones = {'Todos los videos': None}
+        for i, v in enumerate(videos, 1):
+            opciones[f'Video {i:02d} · {v["descripcion"][:40]}'] = v['url']
+        seleccion = st.selectbox('Filtrar por publicación', list(opciones),
+                                 key='filtro_ia')
+        url_elegida = opciones[seleccion]
+        registros = []
+        for url, comentarios in st.session_state.comments.items():
+            if url_elegida is not None and url != url_elegida:
+                continue
+            for comentario in comentarios:
+                texto = str(comentario.get('texto', '')).strip()
+                if texto:
+                    registros.append({'video': url, 'autor': comentario.get('autor', ''),
+                                      'texto': texto})
+        st.metric('Comentarios disponibles', len(registros))
+        firma = tuple((r['video'], r['autor'], r['texto']) for r in registros)
+        if len(registros) < 5:
+            st.info('Extrae al menos cinco comentarios para analizar esta selección.')
+        else:
+            if st.button('🚀 Analizar temas y sentimientos', type='primary',
+                         key='generar_analisis_ia'):
+                try:
+                    # Importación diferida: el dashboard inicia sin cargar modelos pesados.
+                    from analysis import analizar_comentarios
+                    with st.spinner('Analizando embeddings y sentimientos (primera vez puede tardar)...'):
+                        resultado = analizar_comentarios([r['texto'] for r in registros])
+                    st.session_state.resultado_ia = resultado
+                    st.session_state.firma_ia = firma
+                    st.success('Análisis generado correctamente.')
+                except Exception as exc:
+                                        st.session_state.resultado_ia = None
+                                        st.error(f'Error al analizar: {exc}')
+                                        st.exception(exc)
+            resultado = st.session_state.resultado_ia
+            if resultado is not None and st.session_state.firma_ia == firma:
+                from charts import (tabla_resultados, grafico_semantico,
+                                    grafico_similitud, grafico_distribucion,
+                                    grafico_sentimientos)
+                df = tabla_resultados(resultado, registros)
+                st.markdown('#### Resumen de sentimientos')
+                cantidades = df['sentimiento'].value_counts()
+                cols = st.columns(3)
+                for col, nombre in zip(cols, ['Positivo', 'Neutro', 'Negativo']):
+                    cantidad = int(cantidades.get(nombre, 0))
+                    col.metric(nombre, f'{cantidad} ({cantidad/len(df):.0%})')
+                st.caption('La clasificación es automática y puede equivocarse con sarcasmo, '
+                           'jerga o comentarios breves. Confianza no equivale a exactitud.')
+                st.markdown('#### Temas exploratorios')
+                st.write('Cada grupo muestra un comentario representativo, no una etiqueta '
+                         'temática validada. Lee los ejemplos antes de interpretarlo.')
+                for grupo, ejemplo in resultado['ejemplos'].items():
+                    cantidad = int((resultado['grupos'] == grupo).sum())
+                    with st.expander(f'Grupo {grupo+1} · {cantidad} comentarios'):
+                        st.write('**Comentario representativo:**', ejemplo)
+                        st.dataframe(df.loc[df['grupo'] == f'Grupo {grupo+1}',
+                                            ['autor', 'comentario', 'sentimiento', 'video']],
+                                     hide_index=True, use_container_width=True)
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    '🌐 Mapa semántico', '🔥 Similitud', '📊 Grupos',
+                    '💬 Sentimientos', '📋 Comentarios'])
+                with tab1:
+                    st.plotly_chart(grafico_semantico(resultado, registros),
+                                    use_container_width=True)
+                with tab2:
+                    st.plotly_chart(grafico_similitud(resultado, registros),
+                                    use_container_width=True)
+                with tab3:
+                    st.plotly_chart(grafico_distribucion(resultado, registros),
+                                    use_container_width=True)
+                with tab4:
+                    st.plotly_chart(grafico_sentimientos(resultado, registros),
+                                    use_container_width=True)
+                with tab5:
+                    st.dataframe(df[['video', 'autor', 'comentario', 'grupo',
+                                     'sentimiento', 'confianza']],
+                                 hide_index=True, use_container_width=True)
+                st.caption('Los resultados describen comentarios de la muestra, '
+                           'no rasgos psicológicos del titular del perfil.')
