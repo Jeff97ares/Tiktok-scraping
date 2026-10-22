@@ -20,3 +20,5 @@ Thumbs.db
 
 # Archivos de prueba y depuración
 geckodriver.log
+# Base de datos SQLite
+*.db
