@@ -1,4 +1,4 @@
-"""Gráficos interactivos del análisis de comentarios."""
+"""Gráficos interactivos del análisis de comentarios y actividad pública."""
 import pandas as pd
 import plotly.express as px
 
@@ -55,4 +55,22 @@ def grafico_sentimientos(resultado, registros):
                                      'Negativo': '#e66a66'},
                  title='Clasificación estimada de sentimientos', template='plotly_dark')
     fig.update_layout(showlegend=False)
+    return fig
+
+
+def grafico_actividad_circular(resultado):
+    """Composición relativa de cinco indicadores observables (total 100 %)."""
+    df = pd.DataFrame(list(resultado['porcentajes'].items()), columns=['indicador', 'porcentaje'])
+    fig = px.pie(df, names='indicador', values='porcentaje', hole=0.48,
+                 title='Composición de actividad digital (100 %)', template='plotly_dark')
+    fig.update_traces(textinfo='label+percent')
+    return fig
+
+
+def grafico_actividad_barras(resultado):
+    df = pd.DataFrame(list(resultado['porcentajes'].items()), columns=['indicador', 'porcentaje'])
+    fig = px.bar(df, x='indicador', y='porcentaje', text='porcentaje',
+                 title='Peso relativo de indicadores de actividad digital', template='plotly_dark')
+    fig.update_traces(texttemplate='%{text:.2f} %', textposition='outside')
+    fig.update_layout(yaxis_title='Porcentaje del total', xaxis_title='', yaxis_range=[0, 105])
     return fig

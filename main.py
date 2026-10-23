@@ -3,6 +3,9 @@
 import streamlit as st
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
+from analysis import analizar_actividad_digital
+from charts import grafico_actividad_circular, grafico_actividad_barras
+
 from scraper import parse_user, collect_profile, collect_comments, MAX_COMENTARIOS
 from styles import apply_styles
 from components import (
@@ -53,7 +56,7 @@ with st.form("search_form", clear_on_submit=False):
         placeholder="@usuario o https://www.tiktok.com/@usuario",
     )
     search = st.form_submit_button(
-        "🔎 Consultar perfil", type="primary", use_container_width=True
+        "🔎 Consultar perfil", type="primary", width="stretch"
     )
 
 if search:
@@ -141,7 +144,7 @@ if videos:
             st.caption(f"Fecha de publicación (UTC): {fecha or 'No disponible'}")
             st.caption(f"Video {video_ids.index(chosen) + 1} de {len(videos)}")
             st.link_button(
-                "↗ Abrir video en TikTok", video["url"], use_container_width=True
+                "↗ Abrir video en TikTok", video["url"], width="stretch"
             )
 
         st.markdown("#### 💬 Comentarios del video")
@@ -151,7 +154,7 @@ if videos:
         consultar = st.button(
             f"🔎 Consultar hasta {MAX_COMENTARIOS} comentarios",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             key="consultar_comentarios",
         )
         if consultar:
@@ -227,10 +230,68 @@ if profile is not None:
             st.dataframe(
                 [{"Descripción": texto} for texto in descripciones],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No hay descripciones disponibles para analizar temas.")
+
+# Distribución porcentual de indicadores observables del contenido público.
+# Se calcula a partir de las publicaciones de la sesión, sin usar comentarios.
+if videos:
+    st.divider()
+    with st.expander("📊 Perfil de actividad digital · distribución 100 %", expanded=True):
+        st.caption(
+            "Distribución relativa de cinco indicadores calculados a partir de las "
+            "descripciones y fechas de los videos recopilados. No representa "
+            "rasgos de personalidad ni una evaluación Big Five."
+        )
+        try:
+            resultado_actividad = analizar_actividad_digital(videos)
+            if resultado_actividad:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Publicaciones analizadas", resultado_actividad["cantidad_videos"])
+                m2.metric("Descripciones válidas", resultado_actividad["descripciones_validas"])
+                m3.metric("Fechas distintas", resultado_actividad["fechas_validas"])
+
+                if resultado_actividad["total_porcentaje"] > 0:
+                    izquierda, derecha = st.columns(2, gap="large")
+                    with izquierda:
+                        st.plotly_chart(
+                            grafico_actividad_circular(resultado_actividad),
+                            width="stretch",
+                            key="actividad_circular",
+                        )
+                    with derecha:
+                        st.plotly_chart(
+                            grafico_actividad_barras(resultado_actividad),
+                            width="stretch",
+                            key="actividad_barras",
+                        )
+                    st.metric(
+                        "Suma de los indicadores",
+                        f"{resultado_actividad['total_porcentaje']:.2f} %",
+                    )
+                    st.dataframe(
+                        [
+                            {"Indicador": nombre, "Porcentaje": f"{valor:.2f} %"}
+                            for nombre, valor in resultado_actividad["porcentajes"].items()
+                        ],
+                        hide_index=True,
+                        width="stretch",
+                    )
+                else:
+                    st.info("Los datos disponibles no permiten calcular porcentajes positivos.")
+
+                if resultado_actividad["fechas_validas"] < 3:
+                    st.info(
+                        "La regularidad temporal necesita al menos tres fechas "
+                        "de publicación distintas; con menos fechas se muestra como cero."
+                    )
+                st.caption(resultado_actividad["advertencia"])
+            else:
+                st.info("No hay publicaciones suficientes para mostrar el análisis.")
+        except Exception as exc:
+            st.error(f"No se pudo calcular el perfil de actividad digital: {exc}")
 
 # Estado de almacenamiento, incluso antes de realizar una nueva búsqueda.
 with st.expander("🗄️ Estado de la base de datos SQLite", expanded=False):
@@ -345,7 +406,7 @@ if videos:
                                 ["autor", "comentario", "sentimiento", "video"],
                             ],
                             hide_index=True,
-                            use_container_width=True,
+                            width="stretch",
                         )
 
                 tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -360,22 +421,22 @@ if videos:
                 with tab1:
                     st.plotly_chart(
                         grafico_semantico(resultado, registros),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with tab2:
                     st.plotly_chart(
                         grafico_similitud(resultado, registros),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with tab3:
                     st.plotly_chart(
                         grafico_distribucion(resultado, registros),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with tab4:
                     st.plotly_chart(
                         grafico_sentimientos(resultado, registros),
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with tab5:
                     st.dataframe(
@@ -390,7 +451,7 @@ if videos:
                             ]
                         ],
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                     )
                 st.caption(
                     "Los resultados describen comentarios de la muestra, "
